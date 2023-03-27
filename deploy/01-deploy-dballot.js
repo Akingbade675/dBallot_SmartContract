@@ -6,10 +6,8 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
   const { deploy } = deployments;
   const { deployer } = await getNamedAccounts();
 
-  const nextElectionDate = Math.floor(new Date().getTime() / 1000) + 3600; // 1 hour from now
-  const votingPeriod = 3600; // 1 hour
-
-  const args = [nextElectionDate, votingPeriod];
+  const TENURE_IN_YEARS = 4;
+  const args = [TENURE_IN_YEARS];
   const dballot = await deploy("DBallot", {
     from: deployer,
     args,

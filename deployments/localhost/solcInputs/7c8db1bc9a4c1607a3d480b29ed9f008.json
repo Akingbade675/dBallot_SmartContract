@@ -1,0 +1,35 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "contracts/DBallot.sol": {
+      "content": "// SPDX-License-Identifier: MIT\r\npragma solidity ^0.8.7;\r\n\r\n/* Errors */\r\nerror DBallot__NotOwner();\r\nerror DBallot__VoterHasVoted();\r\nerror DBallot__InvalidCandidate();\r\nerror DBallot__VotingPeriodHasEnded();\r\n\r\n/**\r\n * @title DBallot\r\n * @author Abdulbasit Akingbade\r\n * @dev A simple voting contract\r\n */\r\ncontract DBallot {\r\n    address private immutable i_owner;\r\n    uint256 public s_nextElectionDate;\r\n    uint256 public s_votingPeriod;\r\n    uint256 public s_totalCandidatesCount;\r\n    uint256 public s_totalVotes;\r\n\r\n    mapping(uint256 => Candidate) public s_candidates;\r\n    mapping(address => Voter) public s_voters;\r\n\r\n    struct Candidate {\r\n        uint256 id;\r\n        string partyName;\r\n        string description;\r\n        string logoUrl;\r\n        uint256 voteCount;\r\n    }\r\n\r\n    struct Voter {\r\n        bool hasVoted;\r\n        uint256 candidateId;\r\n    }\r\n\r\n    /* Modifiers */\r\n    modifier onlyOwner() {\r\n        if (msg.sender != i_owner) revert DBallot__NotOwner();\r\n        _;\r\n    }\r\n\r\n    modifier onlyDuringVotingPeriod() {\r\n        if (\r\n            block.timestamp > s_nextElectionDate &&\r\n            block.timestamp < s_nextElectionDate + s_votingPeriod\r\n        ) revert DBallot__VotingPeriodHasEnded();\r\n        _;\r\n    }\r\n\r\n    /**\r\n     * @param _nextElectionDate the next election date in seconds\r\n     * @param _votingPeriod the voting period in seconds\r\n     */\r\n    constructor(uint256 _nextElectionDate, uint256 _votingPeriod) {\r\n        i_owner = msg.sender;\r\n        s_nextElectionDate = _nextElectionDate;\r\n        s_votingPeriod = _votingPeriod;\r\n    }\r\n\r\n    // add candidates\r\n    /**\r\n     * @param _partyName the name of the party\r\n     * @param _description the description of the party\r\n     * @param _logoUrl the url of the party logo\r\n     */\r\n    function addCandidate(\r\n        string memory _partyName,\r\n        string memory _description,\r\n        string memory _logoUrl\r\n    ) public onlyOwner {\r\n        Candidate memory candidate = Candidate({\r\n            id: s_totalCandidatesCount,\r\n            partyName: _partyName,\r\n            description: _description,\r\n            logoUrl: _logoUrl,\r\n            voteCount: 0\r\n        });\r\n        s_totalCandidatesCount++;\r\n        s_candidates[candidate.id] = candidate;\r\n    }\r\n\r\n    // vote\r\n    /**\r\n     * @param _candidateId the id of the candidate\r\n     */\r\n    function castVote(uint256 _candidateId) public onlyDuringVotingPeriod {\r\n        // require that they haven't voted before\r\n        if (s_voters[msg.sender].hasVoted) revert DBallot__VoterHasVoted();\r\n        // require a valid candidate\r\n        if (_candidateId >= s_totalCandidatesCount)\r\n            revert DBallot__InvalidCandidate();\r\n        // record that voter has voted\r\n        s_voters[msg.sender] = Voter({\r\n            hasVoted: true,\r\n            candidateId: _candidateId\r\n        });\r\n        // update candidate vote Count\r\n        s_candidates[_candidateId].voteCount++;\r\n        s_totalVotes++;\r\n    }\r\n\r\n    // get results\r\n    function getResults() public view returns (Candidate[] memory) {\r\n        Candidate[] memory results = new Candidate[](s_totalCandidatesCount);\r\n        for (uint256 i = 0; i < s_totalCandidatesCount; i++) {\r\n            results[i] = s_candidates[i];\r\n        }\r\n        return results;\r\n    }\r\n\r\n    /* Setters */\r\n    function setNextElectionDate(uint256) public view returns (uint256) {\r\n        return s_nextElectionDate;\r\n    }\r\n\r\n    /* View / Pure functions */\r\n    function getNextElectionDate() public view returns (uint256) {\r\n        return s_nextElectionDate;\r\n    }\r\n}\r\n"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": false,
+      "runs": 200
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "devdoc",
+          "userdoc",
+          "storageLayout",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}
