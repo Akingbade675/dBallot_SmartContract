@@ -8,6 +8,7 @@ error DBallot__InvalidCandidate();
 error DBallot__VotingPeriodHasEnded();
 error DBallot__NotElectionYear(uint256 _nextElectionYear);
 error DBallot__ElectionHasStarted();
+error DBallot__ElectionHasTakenPlace();
 
 /**
  * @title DBallot
@@ -19,23 +20,25 @@ error DBallot__ElectionHasStarted();
  */
 contract DBallot {
     address private immutable i_owner;
-    uint256 private s_nextElectionYear;
+    uint256 private s_nextElectionYear; // TODO: update s_nextElectionYear after election
     uint256 private s_tenureInYears;
-    // uint256 private s_votingDay;
-    mapping(uint256 => uint256) private s_votingDay;
+    // uint256 private s_electionStartDate;
+    mapping(uint256 => uint256) private s_electionStartDate;
     // uint256 private s_totalCandidatesCount;
-    mapping(uint256 => uint256) private s_totalCandidatesCount;
+    // mapping(uint256 => uint256) private s_totalCandidatesCount;
     // uint256 private s_totalVotes;
     mapping(uint256 => uint256) private s_totalVotes;
 
+    uint256 private s_electionDurationInHours;
+
     // mapping(uint256 => Candidate) private s_candidates;
-    mapping(uint256 => mapping(uint256 => Candidate)) private s_candidates;
+    mapping(uint256 => Candidate[]) private s_candidates;
     // mapping(address => Voter) public s_voters;
-    mapping(uint256 => mapping(address => Voter)) public s_voters;
+    mapping(uint256 => mapping(address => Voter)) private s_voters;
 
     struct Candidate {
         uint256 id;
-        string partyName;
+        string name;
         string description;
         string logoUrl;
         uint256 voteCount;
@@ -43,22 +46,23 @@ contract DBallot {
 
     struct Voter {
         bool hasVoted;
-        uint256 candidateId /**candidateId of who they voted for */;
+        uint256 votedCandidateId /**candidateId of who they voted for */;
     }
 
     /* Events */
     event CandidateAdded(
         uint256 _id,
-        string _partyName,
+        string _name,
         string _description,
         string _logoUrl,
         uint256 _year
     );
     event VoteCasted(
         address indexed _voter,
-        uint256 _candidateId,
-        uint256 _year
+        uint256 indexed _year,
+        uint256 _candidateId
     );
+    event ElectionStarted(uint256 indexed _year, uint256 _startDate);
 
     /* Modifiers */
     modifier onlyOwner() {
@@ -74,9 +78,12 @@ contract DBallot {
 
     modifier onlyDuringVotingPeriod() {
         if (
-            getCurrentYear() != s_nextElectionYear &&
-            block.timestamp < s_votingDay[getCurrentYear()] &&
-            block.timestamp > s_votingDay[getCurrentYear()] + 1 days
+            ((getCurrentYear() - s_nextElectionYear) % s_tenureInYears) != 0 ||
+            //(s_electionStartDate[getCurrentYear()] != 0 ||
+            block.timestamp < s_electionStartDate[getCurrentYear()] ||
+            block.timestamp >
+            s_electionStartDate[getCurrentYear()] +
+                (s_electionDurationInHours * 3600)
         ) revert DBallot__VotingPeriodHasEnded();
         _;
     }
@@ -94,60 +101,61 @@ contract DBallot {
      * @dev Declares the start date of the election for the current year
      * @dev Only the owner can call this function
      * @dev The election can only be declared during an election year i.e past election year + tenure
-     * @param _startDateInSecs the start date of the election in seconds
+     * @param _electionDurationInHours the duration the
      */
-    function declareElection(
-        uint256 _startDateInSecs
+    function startElection(
+        uint256 _electionDurationInHours
     ) public onlyOwner validElectionYear {
         uint256 currentYear = getCurrentYear();
-        s_votingDay[currentYear] = _startDateInSecs;
-        s_nextElectionYear = currentYear + s_tenureInYears;
+        if (s_electionStartDate[currentYear] != 0)
+            revert DBallot__ElectionHasTakenPlace();
+        uint256 time = block.timestamp;
+        s_electionStartDate[currentYear] = time;
+        s_electionDurationInHours = _electionDurationInHours;
+        //s_nextElectionYear = currentYear + s_tenureInYears;
+
+        emit ElectionStarted(currentYear, time);
     }
 
     // add candidates
     /**
-     * @param _partyName the name of the party
+     * @param _name the name of the party
      * @param _description the description of the party
      * @param _logoUrl the url of the party logo
      * @dev Only the owner can call this function
      * @dev Candidates can only be added during an election year
      */
     function addCandidate(
-        string memory _partyName,
+        string memory _name,
         string memory _description,
         string memory _logoUrl
     ) public onlyOwner validElectionYear {
-        if (block.timestamp > s_votingDay[getCurrentYear()])
-            revert DBallot__ElectionHasStarted();
-        require(
-            bytes(_partyName).length > 0,
-            "DBallot: party name cannot be empty"
-        );
+        if (
+            s_electionStartDate[getCurrentYear()] != 0 &&
+            block.timestamp > s_electionStartDate[getCurrentYear()]
+        ) revert DBallot__ElectionHasStarted();
+        require(bytes(_name).length > 0, "DBallot: party name cannot be empty");
         // Check if candidate with the same party name already exists
-        for (uint i = 0; i < s_totalCandidatesCount[getCurrentYear()]; i++) {
-            Candidate storage existingCandidate = s_candidates[
-                getCurrentYear()
-            ][i];
+        Candidate[] memory candidates = s_candidates[getCurrentYear()];
+        for (uint i = 0; i < candidates.length; i++) {
             if (
-                keccak256(bytes(existingCandidate.partyName)) ==
-                keccak256(bytes(_partyName))
+                keccak256(bytes(candidates[i].name)) == keccak256(bytes(_name))
             ) {
                 revert("Candidate with same party name already exists");
             }
         }
         Candidate memory candidate = Candidate({
-            id: s_totalCandidatesCount[getCurrentYear()],
-            partyName: _partyName,
+            id: getTotalCandidatesCount(getCurrentYear()),
+            name: _name,
             description: _description,
             logoUrl: _logoUrl,
             voteCount: 0
         });
-        s_totalCandidatesCount[getCurrentYear()]++;
-        s_candidates[getCurrentYear()][candidate.id] = candidate;
+        s_candidates[getCurrentYear()].push(candidate);
 
         emit CandidateAdded(
             candidate.id,
-            candidate.partyName,
+            candidate.name,
             candidate.description,
             candidate.logoUrl,
             getCurrentYear()
@@ -165,12 +173,12 @@ contract DBallot {
         if (s_voters[getCurrentYear()][msg.sender].hasVoted)
             revert DBallot__VoterHasVoted();
         // require a valid candidate
-        if (_candidateId >= s_totalCandidatesCount[getCurrentYear()])
+        if (_candidateId >= getTotalCandidatesCount(getCurrentYear()))
             revert DBallot__InvalidCandidate();
         // record that voter has voted
         s_voters[getCurrentYear()][msg.sender] = Voter({
             hasVoted: true,
-            candidateId: _candidateId
+            votedCandidateId: _candidateId
         });
         // update candidate vote Count
         s_candidates[getCurrentYear()][_candidateId].voteCount++;
@@ -180,19 +188,19 @@ contract DBallot {
     }
 
     // get results
-    function getResults(
+    /*function getResults(
         uint256 _electionYear
     ) public view returns (Candidate[] memory) {
         Candidate[] memory results = new Candidate[](
-            s_totalCandidatesCount[_electionYear]
+            getTotalCandidatesCount(_electionYear)
         );
-        for (uint256 i = 0; i < s_totalCandidatesCount[_electionYear]; i++) {
+        for (uint256 i = 0; i < getTotalCandidatesCount(_electionYear); i++) {
             results[i].id = s_candidates[_electionYear][i].id;
-            results[i].partyName = s_candidates[_electionYear][i].partyName;
+            results[i].name = s_candidates[_electionYear][i].name;
             results[i].voteCount = s_candidates[_electionYear][i].voteCount;
         }
         return results;
-    }
+    }*/
 
     /* Setters */
     // function setNextElectionDate(uint256) public view returns (uint256) {
@@ -225,7 +233,7 @@ contract DBallot {
     function getTotalCandidatesCount(
         uint256 _electionYear
     ) public view returns (uint256) {
-        return s_totalCandidatesCount[_electionYear];
+        return s_candidates[_electionYear].length;
     }
 
     /**
@@ -242,8 +250,10 @@ contract DBallot {
      * @param _electionYear the year of the election
      * @return the start date of the election for the given year
      */
-    function getVotingDay(uint256 _electionYear) public view returns (uint256) {
-        return s_votingDay[_electionYear];
+    function getElectionStartDate(
+        uint256 _electionYear
+    ) public view returns (uint256) {
+        return s_electionStartDate[_electionYear];
     }
 
     /**
@@ -254,9 +264,22 @@ contract DBallot {
     function getVoter(
         uint256 _electionYear,
         address _voterAddress
-    ) public view returns (bool, uint256) {
+    ) public view returns (Voter memory) {
         Voter memory voter = s_voters[_electionYear][_voterAddress];
-        return (voter.hasVoted, voter.candidateId);
+        return voter;
+    }
+
+    function getElectionWinner(
+        uint256 _electionYear
+    ) public view returns (Candidate memory) {
+        Candidate[] memory candidates = s_candidates[_electionYear];
+        Candidate memory winner = candidates[0];
+        for (uint256 i = 1; i < getTotalCandidatesCount(_electionYear); i++) {
+            if (candidates[i].voteCount > winner.voteCount) {
+                winner = candidates[i];
+            }
+        }
+        return winner;
     }
 
     /**
@@ -267,22 +290,12 @@ contract DBallot {
     function getCandidate(
         uint256 _electionYear,
         uint256 _candidateId
-    )
-        public
-        view
-        returns (uint256, string memory, string memory, string memory, uint256)
-    {
+    ) public view returns (Candidate memory) {
         require(
-            _candidateId < s_totalCandidatesCount[_electionYear],
+            _candidateId < getTotalCandidatesCount(_electionYear),
             "Invalid candidate ID"
         );
         Candidate memory candidate = s_candidates[_electionYear][_candidateId];
-        return (
-            candidate.id,
-            candidate.partyName,
-            candidate.description,
-            candidate.logoUrl,
-            candidate.voteCount
-        );
+        return candidate;
     }
 }
